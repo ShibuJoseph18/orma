@@ -1,0 +1,7 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Orma capture</title><link rel="stylesheet" href="style.css">
+<h1>Orma · LinkedIn capture</h1><p>Sign into LinkedIn in this Chrome profile. Capture starts at the top of your saved list.</p>
+<label>Number of posts <input id="limit" type="number" min="1" step="1" value="20"></label>
+<label><input id="enrich" type="checkbox" checked> Inspect post pages for media metadata (slower)</label>
+<button id="start">Capture latest saved posts</button><button id="stop" disabled>Stop</button><button id="export" disabled>Export JSON</button>
+<p>Results stay in this tab’s memory until you export. Closing or reloading clears them. Media references are not downloaded files or transcripts.</p>
+<pre id="status" role="status">Ready</pre><div id="results"></div><script type="module" src="capture.js"></script></html>

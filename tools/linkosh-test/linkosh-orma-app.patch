@@ -1,0 +1,180 @@
+--- a/ext/background-service.js
++++ b/ext/background-service.js
+@@ -182,7 +182,7 @@
+             rejectDuringSync(); // same one-rule consistency as setItemDeleted
+             return db.setStarred({ id, starred });
+         },
+-        sync: ({ provider, full }) => runSync(provider, [provider], async (stop, onProgress) => sync.syncProvider(provider, { ...(await syncOptions(full)), stop, onProgress })),
++        sync: ({ provider, full, maxItems }) => runSync(provider, [provider], async (stop, onProgress) => sync.syncProvider(provider, { ...(await syncOptions(full)), ...(Number.isInteger(maxItems) && maxItems>0 ? {maxItems} : {}), stop, onProgress })),
+         syncAll: async ({ full }) => {
+             // This exact ordered array is both the displayed sequence and core's
+             // authoritative include order, keeping ordinals coupled to execution.
+--- a/ext/background.js
++++ b/ext/background.js
+@@ -110,3 +110,40 @@
+ service.sync = withKeepalive(service.sync);
+ service.syncAll = withKeepalive(service.syncAll);
+ serveRuntime(runtime, "background", service);
++
++// Orma local web-app bridge. Only explicit loopback origins; never export cookies/raw pages.
++let ormaRun = {running:false,reports:[],selected:[]};
++chrome.runtime.onMessageExternal.addListener((message,sender,respond)=>{
++    if(!/^http:\/\/(localhost|127\.0\.0\.1):(5173|8000)\/?$/.test(sender.origin || new URL(sender.url).origin)) {
++        respond({error:"Only the local Orma app may connect."}); return false;
++    }
++    const allowed={linkedin:100,instagram:50,youtube:50,twitter:50};
++    (async()=>{
++        if(message.action==="ping") return {ok:true,name:"Linkosh",version:chrome.runtime.getManifest().version};
++        if(message.action==="status") return {...ormaRun,progress:await service.syncStatus({})};
++        if(message.action==="stop") {await service.syncStop({});return {ok:true};}
++        if(message.action==="result") {
++            const {data}=await service.exportDb({});
++            return {items:data.items.filter(i=>ormaRun.selected.includes(i.provider)),reports:ormaRun.reports};
++        }
++        if(message.action==="start") {
++            if(ormaRun.running) throw Error("A capture is already running.");
++            const selected=[...new Set(message.platforms || [])].map(p=>p==="x"?"twitter":p).filter(p=>p in allowed);
++            if(!selected.length) throw Error("Choose a platform.");
++            ormaRun={running:true,reports:[],selected};
++            void (async()=>{
++                const previous=await prefs.get("captureRaw");
++                try {
++                    await prefs.set("captureRaw",false);
++                    for(const provider of selected){
++                        try {ormaRun.reports.push(await service.sync({provider,full:true,maxItems:allowed[provider]}));}
++                        catch(error){ormaRun.reports.push({providerId:provider,status:"failed",error:String(error.message||error)});}
++                    }
++                } finally {await prefs.set("captureRaw",previous ?? false);ormaRun.running=false;}
++            })();
++            return {started:true};
++        }
++        throw Error("Unsupported Orma action");
++    })().then(respond,error=>respond({error:String(error.message||error)}));
++    return true;
++});
+\ No newline at end of file
+--- a/ext/providers/youtube.js
++++ b/ext/providers/youtube.js
+@@ -111,7 +111,7 @@
+             }
+             return env.withTab(TAB, async (tabId) => {
+                 const account = await getAccount(tabId);
+-                const playlists = await listPlaylists(tabId, account, onPage);
++                const playlists = new Map([["WL", "Watch later"]]); // Orma: only Watch Later, in playlist order.
+                 for (const [playlistId, collection] of playlists) {
+                     // Watch Later lists newest-saved-first, so the usual incremental
+                     // rule applies. Other playlists can be manually ordered with new
+--- a/manifest.json
++++ b/manifest.json
+@@ -1,52 +1,58 @@
+-{
+-  "manifest_version": 3,
+-  "name": "Linkosh",
+-  "version": "0.1.2",
+-  "description": "Fetch and list your saved items from LinkedIn, Instagram, YouTube, Hacker News, X, Facebook and Substack (more services coming).",
+-  "permissions": [
+-    "storage",
+-    "cookies",
+-    "offscreen",
+-    "scripting"
+-  ],
+-  "host_permissions": [
+-    "https://www.linkedin.com/*",
+-    "https://www.instagram.com/*",
+-    "https://www.youtube.com/*",
+-    "https://news.ycombinator.com/*",
+-    "https://x.com/*",
+-    "https://www.facebook.com/*",
+-    "https://substack.com/*"
+-  ],
+-  "options_ui": {
+-    "page": "pages/options/options.html",
+-    "open_in_tab": true
+-  },
+-  "web_accessible_resources": [
+-    {
+-      "resources": [
+-        "debug.html"
+-      ],
+-      "matches": [
+-        "<all_urls>"
+-      ]
+-    }
+-  ],
+-  "content_security_policy": {
+-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+-  },
+-  "background": {
+-    "service_worker": "ext/background.js",
+-    "type": "module"
+-  },
+-  "action": {
+-    "default_popup": "pages/popup/popup.html",
+-    "default_title": "Linkosh"
+-  },
+-  "icons": {
+-    "16": "icons/icon16.png",
+-    "48": "icons/icon48.png",
+-    "128": "icons/icon128.png"
+-  },
+-  "version_name": "0.1.2 Orma ingestion (memory only)"
+-}
++{
++  "manifest_version": 3,
++  "name": "Linkosh",
++  "version": "0.1.2",
++  "description": "Fetch and list your saved items from LinkedIn, Instagram, YouTube, Hacker News, X, Facebook and Substack (more services coming).",
++  "permissions": [
++    "storage",
++    "cookies",
++    "offscreen",
++    "scripting"
++  ],
++  "host_permissions": [
++    "https://www.linkedin.com/*",
++    "https://www.instagram.com/*",
++    "https://www.youtube.com/*",
++    "https://news.ycombinator.com/*",
++    "https://x.com/*",
++    "https://www.facebook.com/*",
++    "https://substack.com/*"
++  ],
++  "options_ui": {
++    "page": "pages/options/options.html",
++    "open_in_tab": true
++  },
++  "web_accessible_resources": [
++    {
++      "resources": [
++        "debug.html"
++      ],
++      "matches": [
++        "<all_urls>"
++      ]
++    }
++  ],
++  "content_security_policy": {
++    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
++  },
++  "background": {
++    "service_worker": "ext/background.js",
++    "type": "module"
++  },
++  "action": {
++    "default_popup": "pages/popup/popup.html",
++    "default_title": "Linkosh"
++  },
++  "icons": {
++    "16": "icons/icon16.png",
++    "48": "icons/icon48.png",
++    "128": "icons/icon128.png"
++  },
++  "version_name": "0.1.2 Orma ingestion (memory only)",
++  "externally_connectable": {
++    "matches": [
++      "http://localhost/*",
++      "http://127.0.0.1/*"
++    ]
++  }
++}
+\ No newline at end of file
