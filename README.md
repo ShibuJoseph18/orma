@@ -15,9 +15,10 @@ The six-slide presentation and narrated walkthrough are in output/. See DEMO.md 
 Requires Node.js 20.19+ and Python 3.12+. The bundled FalkorDBLite database runs in Linux/WSL; Docker is optional.
 
 ~~~bash
-cd /home/shibu/cs/hackathons/orma
-uv venv --python 3.13 .venv
-uv pip install --python .venv/bin/python -r backend/requirements.txt
+git clone https://github.com/ShibuJoseph18/orma.git
+cd orma
+python3 -m venv .venv
+.venv/bin/python -m pip install -r backend/requirements.txt
 npm install
 cp backend/.env.example backend/.env  # only if .env does not already exist
 # Set GEMINI_API_KEY in backend/.env
